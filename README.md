@@ -97,6 +97,14 @@ This repository contains a comprehensive, automated Security Operations Center (
 
 - Adjust rule severities and ban durations in `soc-rule-engine.py` to tune the system for your environment.
 
+## Running Tests
+
+The tests simulate network failures (timeouts, 429, 5xx, outages) against the Telegram, Groq and Cloudflare calls with a fake network, so they need no tokens, server or internet access:
+```bash
+pip install -r requirements.txt pytest
+python -m pytest tests
+```
+
 ## Privacy & Security
 
 IP addresses, email addresses, passwords and Bearer tokens are automatically masked before being sent to the Groq API.
@@ -260,6 +268,14 @@ Bot üzerinden kullanabileceğiniz komutlar şunlardır:
 ## Özelleştirme
 
 - Ortamınızın ihtiyaçlarına göre ayarlamalar yapmak için `soc-rule-engine.py` içindeki kuralları ve ban sürelerini değiştirebilirsiniz.
+
+## Testleri Çalıştırma
+
+Testler; Telegram, Groq ve Cloudflare çağrılarında ağ hatalarını (zaman aşımı, 429, 5xx, kesinti) sahte bir ağ ile simüle eder. Token, sunucu veya internet bağlantısı gerektirmez:
+```bash
+pip install -r requirements.txt pytest
+python -m pytest tests
+```
 
 ## Gizlilik & Güvenlik
 
