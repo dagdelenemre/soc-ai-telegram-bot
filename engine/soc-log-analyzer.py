@@ -2,10 +2,8 @@
 import os
 import sys
 import re
-import json
 import time
 import subprocess
-import urllib.request
 from datetime import datetime, timedelta
 
 import sys
@@ -15,9 +13,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     # IDE and local repository execution
     from core.soc_config import load_soc_config
+    from core.soc_resilience import groq_chat, is_auth_error, telegram_api
 except ImportError:
     # Production flattened execution (/usr/local/bin)
     from soc_config import load_soc_config  # type: ignore
+    from soc_resilience import groq_chat, is_auth_error, telegram_api  # type: ignore
+
+from nopanic import deadline, time_remaining
 
 config = load_soc_config()
 GROQ_API_KEY = config.get("GROQ_API_KEY")
@@ -26,6 +28,10 @@ SERVER_IP = config.get("SERVER_IP", "255.255.255.255")
 STATE_FILE = "/var/lib/soc/last_run"
 WARN_FILE = "/var/lib/soc/last_warn"
 DB_PATH = "/var/lib/soc/soc_logs.db"
+
+# Total time for the Groq step, all models and retries included. The bot's
+# /analyze command kills the whole analyzer run after 120 seconds.
+GROQ_TIME_BUDGET = 75
 
 def mask_sensitive(text):
     text = re.sub(r'\b(([0-9]{1,3}\.){3})[0-9]{1,3}\b', r'\1XXX', text)
@@ -84,6 +90,7 @@ def collect_logs(last_run):
     logs += f"=== NGINX ACCESS ===\n{mask_sensitive(nginx_acc)}\n"
     return logs
 
+@deadline(GROQ_TIME_BUDGET)
 def analyze_with_groq(logs):
     prompt = f"""Analyze the following server logs. Report only real threats you detect.
 
@@ -110,6 +117,9 @@ LOGS:
     ]
     
     for attempt, model in enumerate(models, 1):
+        if time_remaining() <= 0:
+            print(f"[{datetime.now()}] Time budget of {GROQ_TIME_BUDGET}s exhausted, skipping remaining models", file=sys.stderr)
+            break
         print(f"[{datetime.now()}] Attempting model ({attempt}/{len(models)}): {model}", file=sys.stderr)
         payload = {
             "model": model,
@@ -117,14 +127,10 @@ LOGS:
             "max_tokens": 1500,
             "temperature": 0.1
         }
-        req = urllib.request.Request(
-            "https://api.groq.com/openai/v1/chat/completions",
-            data=json.dumps(payload).encode(),
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-        )
         try:
-            resp = urllib.request.urlopen(req, timeout=30)
-            data = json.loads(resp.read().decode())
+            # Transient errors are retried on the same model with jittered
+            # backoff (honoring Retry-After); anything else moves on at once.
+            data = groq_chat(GROQ_API_KEY, payload, timeout=30)
             if 'choices' in data:
                 content = data['choices'][0]['message']['content'].strip()
                 content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL|re.IGNORECASE).strip()
@@ -135,11 +141,13 @@ LOGS:
                 print(f"[{datetime.now()}] Analysis successful: {model}", file=sys.stderr)
                 return content
         except Exception as e:
-            wait_secs = 2 ** attempt
-            print(f"[{datetime.now()}] {model} failed ({e}). Waiting {wait_secs}s...", file=sys.stderr)
+            print(f"[{datetime.now()}] {model} failed ({e}). Trying next model...", file=sys.stderr)
             run_cmd(f"echo '[{datetime.now()}] MODEL_FAIL: {model} -> {e}' >> /var/log/soc-analyzer.log")
-            time.sleep(wait_secs)
-            
+            if is_auth_error(e):
+                # Every model would reject the same API key
+                print(f"[{datetime.now()}] Groq rejected the API key, skipping remaining models", file=sys.stderr)
+                break
+
     print(f"[{datetime.now()}] CRITICAL: All Groq models failed!", file=sys.stderr)
     run_cmd(f"echo '[{datetime.now()}] ANALYSIS_ERROR: All models rejected' >> /var/log/soc-analyzer.log")
     return "ANALYSIS_FAILED"
@@ -149,14 +157,8 @@ def send_telegram(msg):
     chat_id = config.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         return
-    payload = json.dumps({"chat_id": chat_id, "text": msg}).encode()
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=payload,
-        headers={"Content-Type": "application/json"}
-    )
     try:
-        urllib.request.urlopen(req, timeout=10)
+        telegram_api(token, "sendMessage", {"chat_id": chat_id, "text": msg}, timeout=10)
     except:
         pass
 

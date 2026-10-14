@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
-import urllib.request
+import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    # IDE and local repository execution
+    from core.soc_resilience import http_get_text
+except ImportError:
+    # Production flattened execution (/usr/local/bin)
+    from soc_resilience import http_get_text  # type: ignore
 
 CONF_FILE = "/etc/nginx/conf.d/cloudflare-real-ip.conf"
 
 def fetch_ips():
     ips = []
     try:
-        resp4 = urllib.request.urlopen("https://www.cloudflare.com/ips-v4", timeout=10)
-        ips.extend(resp4.read().decode().strip().split('\n'))
-        
-        resp6 = urllib.request.urlopen("https://www.cloudflare.com/ips-v6", timeout=10)
-        ips.extend(resp6.read().decode().strip().split('\n'))
+        # Transient network errors are retried with backoff before giving up
+        ips.extend(http_get_text("https://www.cloudflare.com/ips-v4").strip().split('\n'))
+
+        ips.extend(http_get_text("https://www.cloudflare.com/ips-v6").strip().split('\n'))
     except Exception as e:
         print(f"Error fetching Cloudflare IPs: {e}")
         sys.exit(1)

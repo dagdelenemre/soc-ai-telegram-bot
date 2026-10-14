@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import urllib.request
-import json
 import subprocess
 import sqlite3
 import time
@@ -14,9 +12,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     # IDE and local repository execution
     from core.soc_config import load_soc_config, CLOUDFLARE_PREFIXES
+    from core.soc_resilience import telegram_api
 except ImportError:
     # Production flattened execution (/usr/local/bin)
     from soc_config import load_soc_config, CLOUDFLARE_PREFIXES  # type: ignore
+    from soc_resilience import telegram_api  # type: ignore
 
 config = load_soc_config()
 DB_PATH = config.get("DB_PATH", "/var/lib/soc/soc_logs.db")
@@ -49,18 +49,9 @@ _CMD_COOLDOWN = 3  # seconds
 
 
 def api_call(token, method, data=None):
-    url = f"https://api.telegram.org/bot{token}/{method}"
-    if data:
-        payload = json.dumps(data).encode("utf-8")
-        req = urllib.request.Request(
-            url, data=payload,
-            headers={"Content-Type": "application/json; charset=utf-8"}
-        )
-    else:
-        req = urllib.request.Request(url)
+    # Retries, Telegram rate limiting and the circuit breaker live in soc_resilience
     try:
-        resp = urllib.request.urlopen(req, timeout=30)
-        return json.loads(resp.read().decode())
+        return telegram_api(token, method, data or None, timeout=30)
     except Exception as e:
         print(f"API error: {e}")
         return None

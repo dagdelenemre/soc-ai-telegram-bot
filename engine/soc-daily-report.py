@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 import sqlite3
-import urllib.request
-import json
 import os
 from datetime import datetime, timedelta
 
@@ -14,9 +12,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     # IDE and local repository execution
     from core.soc_config import load_soc_config
+    from core.soc_resilience import telegram_api
 except ImportError:
     # Production flattened execution (/usr/local/bin)
     from soc_config import load_soc_config  # type: ignore
+    from soc_resilience import telegram_api  # type: ignore
 
 config = load_soc_config()
 DB_PATH = config.get("DB_PATH", "/var/lib/soc/soc_logs.db")
@@ -60,18 +60,11 @@ def get_daily_stats(date):
     return stats, rule_stats, ban_count, threats
 
 def send_telegram(token, chat_id, message):
-    payload = json.dumps({
-        "chat_id": chat_id,
-        "text": message
-    }).encode("utf-8")
-    
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=payload,
-        headers={"Content-Type": "application/json; charset=utf-8"}
-    )
     try:
-        urllib.request.urlopen(req)
+        telegram_api(token, "sendMessage", {
+            "chat_id": chat_id,
+            "text": message
+        })
         print("Daily report sent to Telegram")
     except Exception as e:
         print(f"Telegram error: {e}")

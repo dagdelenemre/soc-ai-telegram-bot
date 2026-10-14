@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import re
-import json
 import sqlite3
-import urllib.request
 from datetime import datetime
 
 import sys
@@ -13,9 +11,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     # IDE and local repository execution
     from core.soc_config import load_soc_config, CLOUDFLARE_PREFIXES
+    from core.soc_resilience import telegram_api
 except ImportError:
     # Production flattened execution (/usr/local/bin)
     from soc_config import load_soc_config, CLOUDFLARE_PREFIXES  # type: ignore
+    from soc_resilience import telegram_api  # type: ignore
 
 config = load_soc_config()
 DB_PATH = config.get("DB_PATH", "/var/lib/soc/soc_logs.db")
@@ -128,15 +128,8 @@ def send_message(token, chat_id, text, command=None, pending_id=None):
     else:
         payload = {"chat_id": chat_id, "text": text}
 
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=data,
-        headers={"Content-Type": "application/json; charset=utf-8"}
-    )
     try:
-        resp = urllib.request.urlopen(req)
-        return json.loads(resp.read().decode())
+        return telegram_api(token, "sendMessage", payload)
     except Exception as e:
         print(f"Telegram error: {e}")
         return None
@@ -243,14 +236,8 @@ def process_threats(token, chat_id, threats, raw_logs):
                     ]]
                 }
             }
-            data = json.dumps(edit_payload).encode("utf-8")
-            req = urllib.request.Request(
-                f"https://api.telegram.org/bot{token}/editMessageText",
-                data=data,
-                headers={"Content-Type": "application/json; charset=utf-8"}
-            )
             try:
-                urllib.request.urlopen(req)
+                telegram_api(token, "editMessageText", edit_payload)
                 print(f"Sent: {severity} | {category} | IP: {ip}")
             except Exception as e:
                 print(f"Edit error: {e}")

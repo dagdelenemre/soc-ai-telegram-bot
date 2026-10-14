@@ -17,13 +17,14 @@ This repository contains a comprehensive, automated Security Operations Center (
 - **Automated Threat Response:** Detects SQL Injection, XSS, Directory Scanning, Code Injection, and SSH Brute-Force attacks. Unwanted IPs are automatically banned via Nginx deny rules.
 - **Telegram Bot Integration:** Allows you to control your SOC from your Telegram app. Receive real-time alerts and run commands to ban/unban IPs, view logs, get server status, and analyze threats.
 - **Groq API Integration:** Analyzes raw server logs and attack patterns autonomously using AI (LLM integration) to provide actionable insights.
+- **Resilient External Calls:** Telegram, Groq and Cloudflare requests go through [nopanic](https://github.com/dagdelenemre/nopanic): transient errors are retried with backoff (honoring `Retry-After`), Telegram sends are rate limited and guarded by a circuit breaker, and the Groq analysis runs within a fixed time budget.
 - **Auto-Ban / Unban Mechanism:** Dynamically maintains ban lists and unbans IPs based on configurable expiration rules.
 - **Whitelist & Cloudflare Support:** Built-in safeguards to prevent banning Cloudflare IP ranges or explicitly whitelisted IP addresses.
 
 ## Prerequisites
 
 - Linux Server (Ubuntu/Debian recommended)
-- `python3` and `pip` (for Python modules)
+- `python3` (3.10+) and `pip` (for Python modules)
 - `nginx`
 - `ufw` (for firewall management)
 - `sqlite3`
@@ -178,13 +179,14 @@ Bu depo, sunucu etkinliklerini izlemek, kötü niyetli girişimleri gerçek zama
 - **Otomatik Tehdit Yanıtı:** SQL Injection, XSS, Dizin Tarama, Kod Enjeksiyonu ve SSH Brute-Force saldırılarını tespit eder. İstenmeyen IP'ler, Nginx deny kuralları aracılığıyla otomatik olarak engellenir (banlanır).
 - **Telegram Bot Entegrasyonu:** SOC sisteminizi Telegram uygulamanızdan yönetmenizi sağlar. Gerçek zamanlı uyarılar alın ve IP banlama/ban kaldırma, logları görüntüleme, sunucu durumunu öğrenme ve tehditleri analiz etme komutlarını çalıştırın.
 - **Groq API Entegrasyonu:** Tehdit raporları sağlamak için yapay zeka (LLM entegrasyonu) kullanarak ham sunucu loglarını ve saldırı modellerini otonom olarak analiz eder.
+- **Dayanıklı Dış Çağrılar:** Telegram, Groq ve Cloudflare istekleri [nopanic](https://github.com/dagdelenemre/nopanic) üzerinden yapılır: geçici hatalar backoff ile (`Retry-After` dikkate alınarak) yeniden denenir, Telegram gönderimleri hız sınırı ve circuit breaker ile korunur, Groq analizi sabit bir süre bütçesi içinde çalışır.
 - **Otomatik Ban / Ban Kaldırma Mekanizması:** Ban listelerini dinamik olarak yönetir ve yapılandırılabilir süre kurallarına göre IP'lerin yasaklarını otomatik olarak kaldırır.
 - **Beyaz Liste (Whitelist) & Cloudflare Desteği:** Cloudflare IP aralıklarının veya açıkça beyaz listeye alınmış IP adreslerinin yanlışlıkla engellenmesini önlemek için yerleşik korumalar.
 
 ## Gereksinimler
 
 - Linux Sunucu (Ubuntu/Debian önerilir)
-- `python3` ve `pip` (Python modülleri için)
+- `python3` (3.10+) ve `pip` (Python modülleri için)
 - `nginx`
 - `ufw` (güvenlik duvarı yönetimi için)
 - `sqlite3`

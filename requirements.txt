@@ -1,3 +1,4 @@
 requests
 pyTelegramBotAPI
 psutil
+nopanic>=0.3.0
