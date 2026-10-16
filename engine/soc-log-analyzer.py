@@ -6,7 +6,7 @@ import json
 import time
 import subprocess
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import sys
 import os
@@ -41,43 +41,151 @@ def get_last_run():
     except:
         return "3 minutes ago"
 
-def run_cmd(cmd):
+def run_cmd(cmd, input=None):
     try:
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, input=input)
         return res.stdout
     except:
         return ""
 
+# --- Time window filtering ---
+# Log timestamps are parsed and compared as datetimes. Comparing them as strings
+# (the previous awk approach) breaks at month/year changes for nginx
+# ("31/Oct/..." >= "01/Nov/...") and on days 1-9 for syslog ("Nov  5" vs "Nov 05").
+
+MONTHS = {m: i for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+
+# nginx $time_local: [31/Oct/2026:23:50:00 +0300]
+NGINX_ACCESS_TS = re.compile(r'\[(\d{2})/([A-Z][a-z]{2})/(\d{4}):(\d{2}):(\d{2}):(\d{2})(?: ([+-]\d{4}))?\]')
+# Classic syslog: "Nov  5 10:30:00 host ..." (day padded with a space, no year)
+SYSLOG_TS = re.compile(r'([A-Z][a-z]{2}) {1,2}(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) ')
+# RFC 3339 syslog (newer Ubuntu): "2026-11-05T10:30:00.123456+03:00 host ..."
+ISO_TS = re.compile(r'(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:[.,]\d+)?(Z|[+-]\d{2}:?\d{2})?(?:\s|$)')
+RELATIVE_SINCE = re.compile(r'\s*(\d+)\s+(second|minute|hour|day|week)s?\s+ago\s*$')
+
+def _offset_tz(text):
+    if text == "Z":
+        return timezone.utc
+    sign = -1 if text[0] == "-" else 1
+    digits = text[1:].replace(":", "")
+    return timezone(sign * timedelta(hours=int(digits[:2]), minutes=int(digits[2:])))
+
+def _to_local_naive(dt):
+    # Everything is compared as naive local time, like datetime.now() in the state file
+    if dt.tzinfo is not None:
+        return dt.astimezone().replace(tzinfo=None)
+    return dt
+
+def parse_last_run(last_run, now=None):
+    """Turns the state file value (datetime.isoformat() or e.g. '3 minutes ago') into a datetime."""
+    now = now or datetime.now()
+    try:
+        since = _to_local_naive(datetime.fromisoformat(last_run.strip()))
+    except ValueError:
+        m = RELATIVE_SINCE.match(last_run)
+        if m:
+            since = now - timedelta(**{m.group(2) + "s": int(m.group(1))})
+        else:
+            # Unreadable state: fall back to the default window instead of the whole file
+            since = now - timedelta(minutes=3)
+    # Log lines have second precision; a line from the same second as the last run is kept
+    return since.replace(microsecond=0)
+
+def parse_nginx_access_ts(line):
+    m = NGINX_ACCESS_TS.search(line)
+    if not m or m.group(2) not in MONTHS:
+        return None
+    day, mon, year, hh, mm, ss, off = m.groups()
+    try:
+        dt = datetime(int(year), MONTHS[mon], int(day), int(hh), int(mm), int(ss))
+        if off:
+            dt = dt.replace(tzinfo=_offset_tz(off))
+        return _to_local_naive(dt)
+    except ValueError:
+        return None
+
+def parse_syslog_ts(line, now=None):
+    m = ISO_TS.match(line)
+    if m:
+        try:
+            dt = datetime(*(int(g) for g in m.groups()[:6]))
+            if m.group(7):
+                dt = dt.replace(tzinfo=_offset_tz(m.group(7)))
+            return _to_local_naive(dt)
+        except ValueError:
+            return None
+    m = SYSLOG_TS.match(line)
+    if not m or m.group(1) not in MONTHS:
+        return None
+    # Classic syslog has no year: assume the current one, unless that puts the line
+    # in the future (December lines read in January belong to last year)
+    now = now or datetime.now()
+    mon, day, hh, mm, ss = MONTHS[m.group(1)], int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5))
+    for year in (now.year, now.year - 1):
+        try:
+            dt = datetime(year, mon, day, hh, mm, ss)
+        except ValueError:  # e.g. Feb 29 in a non-leap year
+            continue
+        if dt <= now + timedelta(days=1):
+            return dt
+    return None
+
+def filter_since(lines, since, parse_ts):
+    """Returns the lines logged at or after `since`, joined as text.
+
+    A line without a parsable timestamp (e.g. a continuation line) belongs to the
+    last timestamped line before it and is kept or dropped together with it.
+    Lines before the first timestamped line are dropped, since their age is unknown.
+    """
+    out = []
+    keep = False
+    for line in lines:
+        ts = parse_ts(line)
+        if ts is not None:
+            keep = ts >= since
+        if keep:
+            out.append(line if line.endswith("\n") else line + "\n")
+    return "".join(out)
+
+def read_since(path, since, parse_ts):
+    try:
+        with open(path, "r", errors="replace") as f:
+            return filter_since(f, since, parse_ts)
+    except OSError:
+        return ""
+
+def nginx_access_since(since, cf_pattern):
+    new_lines = read_since("/var/log/nginx/access.log", since, parse_nginx_access_ts)
+    return run_cmd(f"grep -vE '\" (444|403|301|302) ' | grep -vE '{cf_pattern}|{SERVER_IP}'", input=new_lines)
+
 def collect_raw_logs(last_run):
     cf_pattern = r"173\.245\.|103\.21\.|103\.22\.|103\.31\.|141\.101\.|108\.162\.|190\.93\.|188\.114\.|197\.234\.|198\.41\.|162\.158\.|104\.1[6-9]\.|104\.2[0-4]\.|172\.6[4-9]\.|172\.7[0-1]\.|131\.0\.72\."
-    
-    date_str = run_cmd(f"date -d '{last_run}' '+%d/%b/%Y:%H:%M:%S'").strip()
-    nginx_cmd = f"awk -v since='{date_str}' '{{ match($0, /\\[([^\\]]+)\\]/, arr); if (arr[1] >= since) print }}' /var/log/nginx/access.log 2>/dev/null | grep -vE '\" (444|403|301|302) ' | grep -vE '{cf_pattern}|{SERVER_IP}'"
-    nginx_out = run_cmd(nginx_cmd)
-    
+    since = parse_last_run(last_run)
+
+    nginx_out = nginx_access_since(since, cf_pattern)
+
     ssh_cmd1 = f"journalctl -u ssh --since '{last_run}' 2>/dev/null"
-    date_str2 = run_cmd(f"date -d '{last_run}' '+%b %d %H:%M'").strip()
-    ssh_cmd2 = f"awk -v since='{date_str2}' '{{ if (substr($0,1,15) >= since) print }}' /var/log/auth.log 2>/dev/null"
-    ssh_out = run_cmd(ssh_cmd1) + "\n" + run_cmd(ssh_cmd2)
-    
+    now = datetime.now()
+    ssh_out = run_cmd(ssh_cmd1) + "\n" + read_since("/var/log/auth.log", since, lambda line: parse_syslog_ts(line, now))
+
     ufw_cmd = f"journalctl -k --since '{last_run}' 2>/dev/null | grep 'UFW BLOCK' | grep -vE 'SRC=({cf_pattern}|{SERVER_IP})' | tail -30"
     ufw_out = run_cmd(ufw_cmd)
-    
+
     return f"=== NGINX ACCESS ===\n{nginx_out}\n=== AUTH/SSH ===\n{ssh_out}\n=== UFW ===\n{ufw_out}"
 
 def collect_logs(last_run):
     cf_pattern = r"173\.245\.|103\.21\.|103\.22\.|103\.31\.|141\.101\.|108\.162\.|190\.93\.|188\.114\.|197\.234\.|198\.41\.|162\.158\.|104\.1[6-9]\.|104\.2[0-4]\.|172\.6[4-9]\.|172\.7[0-1]\.|131\.0\.72\."
-    
+
     date_str = run_cmd(f"date -d '{last_run}' '+%Y/%m/%d %H:%M:%S'").strip()
     nginx_err = run_cmd(f"awk -v since='{date_str}' '{{ if (substr($0,1,19) >= since) print }}' /var/log/nginx/error.log 2>/dev/null | grep -v 'signal process\\|graceful\\|reopening'")
-    
+
     ssh_out = run_cmd(f"journalctl -u ssh --since '{last_run}' 2>/dev/null | grep -v 'session opened\\|session closed\\|pam_unix'")
-    
+
     syslog = run_cmd(f"journalctl --since '{last_run}' -p warning 2>/dev/null | grep -v 'sudo\\|cron\\|certbot\\|systemd\\|rsyslog\\|logrotate\\|CRON\\|UFW' | tail -8")
-    
-    date_str2 = run_cmd(f"date -d '{last_run}' '+%d/%b/%Y:%H:%M:%S'").strip()
-    nginx_acc = run_cmd(f"awk -v since='{date_str2}' '{{ match($0, /\\[([^\\]]+)\\]/, arr); if (arr[1] >= since) print }}' /var/log/nginx/access.log 2>/dev/null | grep -vE '\" (444|403|301|302) ' | grep -vE '{cf_pattern}|{SERVER_IP}'")
-    
+
+    nginx_acc = nginx_access_since(parse_last_run(last_run), cf_pattern)
+
     logs = f"=== NGINX ERROR ===\n{mask_sensitive(nginx_err)}\n"
     logs += f"=== AUTH/SSH ===\n{mask_sensitive(ssh_out)}\n"
     logs += f"=== SYSLOG ===\n{mask_sensitive(syslog)}\n"

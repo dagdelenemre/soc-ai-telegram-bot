@@ -96,6 +96,14 @@ This repository contains a comprehensive, automated Security Operations Center (
 
 - Adjust rule severities and ban durations in `soc-rule-engine.py` to tune the system for your environment.
 
+## Running Tests
+
+The tests feed sample log lines to the log time-window filtering, so they need no server, log files or tokens:
+```bash
+pip install pytest
+python -m pytest tests
+```
+
 ## Privacy & Security
 
 IP addresses, email addresses, passwords and Bearer tokens are automatically masked before being sent to the Groq API.
@@ -258,6 +266,14 @@ Bot üzerinden kullanabileceğiniz komutlar şunlardır:
 ## Özelleştirme
 
 - Ortamınızın ihtiyaçlarına göre ayarlamalar yapmak için `soc-rule-engine.py` içindeki kuralları ve ban sürelerini değiştirebilirsiniz.
+
+## Testleri Çalıştırma
+
+Testler, log zaman aralığı filtrelemesine örnek log satırları verir. Sunucu, log dosyası veya token gerektirmez:
+```bash
+pip install pytest
+python -m pytest tests
+```
 
 ## Gizlilik & Güvenlik
 
