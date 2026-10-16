@@ -99,7 +99,7 @@ This repository contains a comprehensive, automated Security Operations Center (
 
 ## Running Tests
 
-The tests simulate network failures (timeouts, 429, 5xx, outages) against the Telegram, Groq and Cloudflare calls with a fake network, so they need no tokens, server or internet access:
+The tests run offline on sample data, so they need no server, tokens or internet access:
 ```bash
 pip install -r requirements.txt pytest
 python -m pytest tests
@@ -271,7 +271,7 @@ Bot üzerinden kullanabileceğiniz komutlar şunlardır:
 
 ## Testleri Çalıştırma
 
-Testler; Telegram, Groq ve Cloudflare çağrılarında ağ hatalarını (zaman aşımı, 429, 5xx, kesinti) sahte bir ağ ile simüle eder. Token, sunucu veya internet bağlantısı gerektirmez:
+Testler örnek verilerle çevrimdışı çalışır; sunucu, token veya internet bağlantısı gerektirmez:
 ```bash
 pip install -r requirements.txt pytest
 python -m pytest tests
