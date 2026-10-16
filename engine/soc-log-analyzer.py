@@ -6,7 +6,7 @@ import json
 import time
 import subprocess
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import sys
 import os
@@ -65,11 +65,8 @@ ISO_TS = re.compile(r'(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:[.,]\
 RELATIVE_SINCE = re.compile(r'\s*(\d+)\s+(second|minute|hour|day|week)s?\s+ago\s*$')
 
 def _offset_tz(text):
-    if text == "Z":
-        return timezone.utc
-    sign = -1 if text[0] == "-" else 1
-    digits = text[1:].replace(":", "")
-    return timezone(sign * timedelta(hours=int(digits[:2]), minutes=int(digits[2:])))
+    # "+0300", "+03:00" or "Z" -> tzinfo
+    return datetime.strptime(text, "%z").tzinfo
 
 def _to_local_naive(dt):
     # Everything is compared as naive local time, like datetime.now() in the state file
