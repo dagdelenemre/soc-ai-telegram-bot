@@ -155,9 +155,19 @@ def read_since(path, since, parse_ts):
     except OSError:
         return ""
 
+def ip_exclusion(cf_pattern):
+    """
+    grep -E alternation of addresses to leave out: Cloudflare ranges plus our own IP.
+    An unset SERVER_IP must not add an empty branch ("...|"), which matches every
+    line and would silently drop all nginx and UFW output.
+    """
+    if SERVER_IP:
+        return f"{cf_pattern}|{re.escape(SERVER_IP)}"
+    return cf_pattern
+
 def nginx_access_since(since, cf_pattern):
     new_lines = read_since("/var/log/nginx/access.log", since, parse_nginx_access_ts)
-    return run_cmd(f"grep -vE '\" (444|403|301|302) ' | grep -vE '{cf_pattern}|{SERVER_IP}'", input=new_lines)
+    return run_cmd(f"grep -vE '\" (444|403|301|302) ' | grep -vE '{ip_exclusion(cf_pattern)}'", input=new_lines)
 
 def collect_raw_logs(last_run):
     cf_pattern = r"173\.245\.|103\.21\.|103\.22\.|103\.31\.|141\.101\.|108\.162\.|190\.93\.|188\.114\.|197\.234\.|198\.41\.|162\.158\.|104\.1[6-9]\.|104\.2[0-4]\.|172\.6[4-9]\.|172\.7[0-1]\.|131\.0\.72\."
@@ -169,7 +179,7 @@ def collect_raw_logs(last_run):
     now = datetime.now()
     ssh_out = run_cmd(ssh_cmd1) + "\n" + read_since("/var/log/auth.log", since, lambda line: parse_syslog_ts(line, now))
 
-    ufw_cmd = f"journalctl -k --since '{last_run}' 2>/dev/null | grep 'UFW BLOCK' | grep -vE 'SRC=({cf_pattern}|{SERVER_IP})' | tail -30"
+    ufw_cmd = f"journalctl -k --since '{last_run}' 2>/dev/null | grep 'UFW BLOCK' | grep -vE 'SRC=({ip_exclusion(cf_pattern)})' | tail -30"
     ufw_out = run_cmd(ufw_cmd)
 
     return f"=== NGINX ACCESS ===\n{nginx_out}\n=== AUTH/SSH ===\n{ssh_out}\n=== UFW ===\n{ufw_out}"

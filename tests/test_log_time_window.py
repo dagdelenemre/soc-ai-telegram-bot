@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -158,3 +159,29 @@ def test_parse_last_run_relative_default(analyzer):
 def test_parse_last_run_unreadable_falls_back_to_default_window(analyzer):
     now = datetime(2026, 11, 1, 0, 5, 30)
     assert analyzer.parse_last_run("garbage", now) == datetime(2026, 11, 1, 0, 2, 30)
+
+
+# --- Cloudflare / own-IP exclusion ---
+# grep -E and Python's re agree on these patterns (literals, classes, alternation).
+
+CF_PATTERN = r"173\.245\.|104\.1[6-9]\."
+CLIENT = '203.0.113.9 - - [01/Nov/2026:00:06:00 +0000] "GET / HTTP/1.1" 200 612 "-" "curl/8.0"'
+CLOUDFLARE = '104.16.1.1 - - [01/Nov/2026:00:06:00 +0000] "GET / HTTP/1.1" 200 612 "-" "curl/8.0"'
+
+
+def test_unset_server_ip_does_not_exclude_every_line(analyzer, monkeypatch):
+    monkeypatch.setattr(analyzer, "SERVER_IP", "")
+    pattern = analyzer.ip_exclusion(CF_PATTERN)
+    assert not re.search(pattern, CLIENT)
+    assert re.search(pattern, CLOUDFLARE)
+    assert not re.search(f"SRC=({pattern})", "UFW BLOCK SRC=203.0.113.9 DST=10.0.0.1")
+
+
+def test_server_ip_is_excluded_literally(analyzer, monkeypatch):
+    monkeypatch.setattr(analyzer, "SERVER_IP", "198.51.100.7")
+    pattern = analyzer.ip_exclusion(CF_PATTERN)
+    assert re.search(pattern, "198.51.100.7 - - [01/Nov/2026:00:06:00 +0000] \"GET / HTTP/1.1\"")
+    assert re.search(f"SRC=({pattern})", "UFW BLOCK SRC=198.51.100.7 DST=10.0.0.1")
+    # Dots are literal: a different address must not match
+    assert not re.search(pattern, "198x51x100x7 - - [01/Nov/2026:00:06:00 +0000]")
+    assert not re.search(pattern, CLIENT)
