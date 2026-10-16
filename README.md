@@ -98,9 +98,9 @@ This repository contains a comprehensive, automated Security Operations Center (
 
 ## Running Tests
 
-The tests feed sample log lines to the log time-window filtering, so they need no server, log files or tokens:
+The tests run offline on sample data, so they need no server, tokens or internet access:
 ```bash
-pip install pytest
+pip install -r requirements.txt pytest
 python -m pytest tests
 ```
 
@@ -269,9 +269,9 @@ Bot üzerinden kullanabileceğiniz komutlar şunlardır:
 
 ## Testleri Çalıştırma
 
-Testler, log zaman aralığı filtrelemesine örnek log satırları verir. Sunucu, log dosyası veya token gerektirmez:
+Testler örnek verilerle çevrimdışı çalışır; sunucu, token veya internet bağlantısı gerektirmez:
 ```bash
-pip install pytest
+pip install -r requirements.txt pytest
 python -m pytest tests
 ```
 
